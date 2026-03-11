@@ -5,7 +5,8 @@ import path from "node:path";
 import { OpenAPIV3 } from "openapi-types";
 import { startHttpTransport } from "./mcp/http-transport";
 import { MCPProxy } from "./mcp/proxy";
-import { resolveSpecPath } from "./utils/base-url";
+import { ensureAnytypeRunning } from "./utils/anytype-launcher";
+import { DEFAULT_BASE_URL, resolveSpecPath } from "./utils/base-url";
 import { getConfig } from "./utils/config";
 
 export class ValidationError extends Error {
@@ -20,23 +21,39 @@ export async function loadOpenApiSpec(): Promise<OpenAPIV3.Document> {
   let rawSpec: string | undefined;
 
   if (finalSpec.startsWith("http://") || finalSpec.startsWith("https://")) {
-    try {
+    const fetchSpec = async () => {
       const response = await axios.get(finalSpec);
-      rawSpec = typeof response.data === "string" ? response.data : JSON.stringify(response.data);
+      return typeof response.data === "string" ? response.data : JSON.stringify(response.data);
+    };
+
+    try {
+      rawSpec = await fetchSpec();
     } catch (error: any) {
       if (error.code === "ECONNREFUSED") {
-        console.error("Can't connect to API. Please ensure Anytype is running and reachable.");
+        const baseUrl = getConfig().httpClient.baseUrl ?? DEFAULT_BASE_URL;
+        const launched = await ensureAnytypeRunning(baseUrl);
+        if (launched) {
+          try {
+            rawSpec = await fetchSpec();
+          } catch (retryError: any) {
+            console.error(`Anytype started but API is still unreachable at ${baseUrl}:`, retryError.message);
+            process.exit(1);
+          }
+        } else {
+          console.error(`Cannot connect to Anytype API at ${baseUrl}. Please ensure the Anytype app is running.`);
+          process.exit(1);
+        }
+      } else {
+        console.error(`Failed to fetch OpenAPI specification from ${finalSpec}:`, error.message);
         process.exit(1);
       }
-      console.error("Failed to fetch OpenAPI specification from URL:", error.message);
-      process.exit(1);
     }
   } else {
     const filePath = path.resolve(process.cwd(), finalSpec);
     try {
       rawSpec = fs.readFileSync(filePath, "utf-8");
     } catch (error: any) {
-      console.error("Failed to read OpenAPI specification file:", error.message || String(error));
+      console.error(`Failed to read OpenAPI specification file from ${finalSpec}:`, error.message || String(error));
       process.exit(1);
     }
   }
@@ -44,7 +61,7 @@ export async function loadOpenApiSpec(): Promise<OpenAPIV3.Document> {
   try {
     return JSON.parse(rawSpec) as OpenAPIV3.Document;
   } catch (error: any) {
-    console.error("Failed to parse OpenAPI specification:", error.message);
+    console.error(`Failed to parse OpenAPI specification from ${finalSpec}:`, error.message);
     process.exit(1);
   }
 }

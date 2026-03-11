@@ -4,7 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema, Tool } from "@modelconte
 import { Headers } from "node-fetch";
 import { OpenAPIV3 } from "openapi-types";
 import pkg from "../../package.json";
-import { HttpClient, HttpClientError } from "../client/http-client";
+import { HttpClient, HttpClientConnectionError, HttpClientError } from "../client/http-client";
 import { OpenAPIToMCPConverter, type ToolMethod } from "../openapi/parser";
 import { getConfig } from "../utils/config";
 
@@ -44,6 +44,17 @@ export class MCPProxy {
     const { methods, openApiLookup } = converter.convertToMCPTools();
     this.methods = methods;
     this.openApiLookup = openApiLookup;
+
+    // TODO: remove after solving the tool availability in Claude issue
+    const toolNames = Object.keys(this.openApiLookup);
+    console.error(
+      `Tools (count: ${toolNames.length}):\n${toolNames
+        .sort()
+        .map((n) => ` - ${n}`)
+        .join("\n")}`,
+    );
+
+    console.error(JSON.stringify(this.openApiLookup, null, 2));
 
     this.setupHandlers();
   }
@@ -89,15 +100,10 @@ export class MCPProxy {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: params } = request.params;
 
+      console.error(`[tool] ${name}(${JSON.stringify(params)})`);
+
       // Find the operation in OpenAPI spec
       const operation = this.findOperation(name);
-
-      if (!this.state.toolsLogged) {
-        const toolNames = Object.keys(this.openApiLookup);
-        console.error(`tools (count: ${toolNames.length}): ${toolNames.join(", ")}`);
-        this.state.toolsLogged = true;
-      }
-
       if (!operation) {
         throw new Error(`Method ${name} not found`);
       }
@@ -131,6 +137,23 @@ export class MCPProxy {
           };
         }
 
+        if (error instanceof HttpClientConnectionError) {
+          console.error(`Connection error in "${name}" tool call:`, error.message);
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: "connection_failed",
+                  message: error.message,
+                  hint: "Ensure the Anytype app is running and reachable.",
+                }),
+              },
+            ],
+          };
+        }
+
         console.error(`Unexpected error in "${name}" tool call`, error);
 
         // don’t leak internals or secrets, throw opaque error
@@ -140,7 +163,14 @@ export class MCPProxy {
   }
 
   private findOperation(operationId: string): (OpenAPIV3.OperationObject & { method: string; path: string }) | null {
-    return this.openApiLookup[operationId] ?? null;
+    const result = this.openApiLookup[operationId] ?? null;
+    if (!result) {
+      console.error(
+        `[findOperation] miss: "${operationId}". Available keys (${Object.keys(this.openApiLookup).length}):`,
+        Object.keys(this.openApiLookup).join(", "),
+      );
+    }
+    return result;
   }
 
   private getContentType(headers: Headers): "text" | "image" | "binary" {

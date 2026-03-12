@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Config, ConfigEnv, ENV_KEYS } from "../config.js";
 
-describe("proxy-config utilities", () => {
+describe("config utilities", () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
@@ -149,7 +149,7 @@ describe("proxy-config utilities", () => {
     it("logs error on parse failure", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       await loadConfig({ OPENAPI_MCP_HEADERS: "bad" });
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"));
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"), expect.anything());
       consoleSpy.mockRestore();
     });
   });
@@ -185,7 +185,7 @@ describe("proxy-config utilities", () => {
         ANYTYPE_API_BASE_URL: "http://127.0.0.1:31009",
         OPENAPI_MCP_HEADERS: JSON.stringify({ Authorization: "Bearer x" }),
       });
-      expect(config).toEqual<Config>({
+      expect(config).toMatchObject<Config>({
         transport: {
           type: "http",
           host: "0.0.0.0",
@@ -194,6 +194,127 @@ describe("proxy-config utilities", () => {
         },
         httpClient: { baseUrl: "http://127.0.0.1:31009", headers: { Authorization: "Bearer x" } },
       });
+    });
+  });
+
+  describe("config — DISCOVERY_TOOL_CONFIG", () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+    });
+
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    async function loadConfig(env: Partial<Record<(typeof ENV_KEYS)[number], string>> = {}) {
+      vi.resetModules();
+      ENV_KEYS.forEach((k) => delete process.env[k]);
+      Object.entries(env).forEach(([k, v]) => {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v as string;
+      });
+      const { getConfig } = await import("../config.js");
+      return getConfig();
+    }
+
+    it("tools is undefined when DISCOVERY_TOOL_CONFIG is not set", async () => {
+      const config = await loadConfig();
+      expect(config.tools).toBeUndefined();
+    });
+
+    it("parses minimal valid config", async () => {
+      const config = await loadConfig({
+        DISCOVERY_TOOL_CONFIG: JSON.stringify({ ttlMs: 60000 }),
+      });
+      expect(config.tools?.discoverSpaces?.ttlMs).toBe(60000);
+    });
+
+    it("parses spaces filter", async () => {
+      const config = await loadConfig({
+        DISCOVERY_TOOL_CONFIG: JSON.stringify({
+          spaces: { Career: { types: { JobApplication: {} } }, Attic: {} },
+        }),
+      });
+      expect(config.tools?.discoverSpaces?.spaces).toEqual({
+        Career: { types: { JobApplication: {} } },
+        Attic: {},
+      });
+    });
+
+    it("throws on malformed JSON", async () => {
+      await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: "{not valid json" })).rejects.toThrow();
+    });
+
+    it("throws on valid JSON that fails schema — negative ttlMs", async () => {
+      await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: JSON.stringify({ ttlMs: -1 }) })).rejects.toThrow();
+    });
+
+    it("throws on valid JSON that fails schema — wrong type", async () => {
+      await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: JSON.stringify({ ttlMs: "five-minutes" }) })).rejects.toThrow();
+    });
+
+    it("error message references DISCOVERY_TOOL_CONFIG on malformed JSON", async () => {
+      await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: "oops" })).rejects.toThrow(/DISCOVERY_TOOL_CONFIG/);
+    });
+  });
+
+  // ─── JsonString helper (via OPENAPI_MCP_HEADERS — already uses it) ──────────
+
+  describe("config — JsonString helper via OPENAPI_MCP_HEADERS", () => {
+    const originalEnv = process.env;
+
+    beforeEach(() => {
+      process.env = { ...originalEnv };
+    });
+    afterEach(() => {
+      process.env = originalEnv;
+    });
+
+    async function loadConfig(env: Partial<Record<(typeof ENV_KEYS)[number], string>> = {}) {
+      vi.resetModules();
+      ENV_KEYS.forEach((k) => delete process.env[k]);
+      Object.entries(env).forEach(([k, v]) => {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v as string;
+      });
+      const { getConfig } = await import("../config.js");
+      return getConfig();
+    }
+
+    it("logs error referencing OPENAPI_MCP_HEADERS on invalid JSON", async () => {
+      const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      await loadConfig({ OPENAPI_MCP_HEADERS: "{bad" });
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"), expect.anything());
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe("config — MCP_INSTRUCTIONS", () => {
+    it("instructions is undefined when MCP_INSTRUCTIONS is unset", async () => {
+      const config = await loadConfig();
+      expect(config.instructions).toBeUndefined();
+    });
+
+    it('"false" → false', async () => {
+      const config = await loadConfig({ MCP_INSTRUCTIONS: "false" });
+      expect(config.instructions).toBe(false);
+    });
+
+    it('"true" → undefined (caller uses bundled)', async () => {
+      const config = await loadConfig({ MCP_INSTRUCTIONS: "true" });
+      expect(config.instructions).toBeUndefined();
+    });
+
+    it("custom string → passed through as-is", async () => {
+      const config = await loadConfig({ MCP_INSTRUCTIONS: "Do only what I say." });
+      expect(config.instructions).toBe("Do only what I say.");
+    });
+
+    it('empty string → undefined (treated as "true")', async () => {
+      const config = await loadConfig({ MCP_INSTRUCTIONS: "" });
+      expect(config.instructions).toBeUndefined();
     });
   });
 });

@@ -104,6 +104,8 @@ npm install -g @anyproto/anytype-mcp
 | `MCP_HOST`                | `127.0.0.1`                     | Host to bind when `MCP_TRANSPORT=http`.                                                                                                                                             |
 | `MCP_PORT`                | `3666`                          | Port to listen on when `MCP_TRANSPORT=http`. Must be in range 1024–65535.                                                                                                           |
 | `MCP_PASSTHROUGH_HEADERS` | `authorization,anytype-version` | Comma-separated list of inbound HTTP header names (lowercase) forwarded from the MCP HTTP client to the Anytype API. Extend with caution — arbitrary headers must not be forwarded. |
+| `MCP_INSTRUCTIONS`        | bundled `instructions.md`       | Instructions broadcast to MCP clients on connect. `false` disables; any other string overrides with custom content.                                                                 |
+
 
 ### Custom API Base URL
 

@@ -7,6 +7,13 @@ import pkg from "../../package.json";
 import { HttpClient, HttpClientConnectionError, HttpClientError } from "../client/http-client";
 import { OpenAPIToMCPConverter, type ToolMethod } from "../openapi/parser";
 import { getConfig } from "../utils/config";
+import { resolveInstructions } from "../utils/resolveInstructions";
+import {
+  DISCOVER_SPACES_TOOL_NAME,
+  discoverSpacesTool,
+  makeDiscoverSpacesHandler,
+  type DiscoverSpacesParams,
+} from "./tools/discovery";
 
 type PathItemObject = OpenAPIV3.PathItemObject & {
   get?: OpenAPIV3.OperationObject;
@@ -26,15 +33,21 @@ export class MCPProxy {
     serverInfo: ConstructorParameters<typeof Server>[0];
     serverOptions: NonNullable<ConstructorParameters<typeof Server>[1]>;
   };
+  private discoverSpaces: (params: DiscoverSpacesParams) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
 
   constructor(name: string, openApiSpec: OpenAPIV3.Document) {
     this.state = {
       toolsLogged: false,
       serverInfo: { name, version: pkg.version, description: `Anytype API proxy (spec v${openApiSpec.info.version})` },
-      serverOptions: { capabilities: { tools: {} } },
+      serverOptions: {
+        capabilities: { tools: {} },
+        instructions: resolveInstructions(getConfig().instructions),
+      },
     };
     this.server = new Server(this.state.serverInfo, this.state.serverOptions);
     this.httpClient = new HttpClient(getConfig().httpClient, openApiSpec);
+
+    this.discoverSpaces = makeDiscoverSpacesHandler(getConfig().httpClient, getConfig().tools?.discoverSpaces);
 
     // Convert OpenAPI spec to MCP tools
     const converter = new OpenAPIToMCPConverter(openApiSpec, {
@@ -77,7 +90,7 @@ export class MCPProxy {
         });
       });
 
-      const tools: Tool[] = [];
+      const tools: Tool[] = [discoverSpacesTool];
 
       toolsByMethodName.forEach((bucket) => {
         const isCollision = bucket.length > 1;
@@ -101,6 +114,10 @@ export class MCPProxy {
       const { name, arguments: params } = request.params;
 
       console.error(`[tool] ${name}(${JSON.stringify(params)})`);
+
+      if (name === DISCOVER_SPACES_TOOL_NAME) {
+        return this.discoverSpaces(params as DiscoverSpacesParams);
+      }
 
       // Find the operation in OpenAPI spec
       const operation = this.findOperation(name);
@@ -210,6 +227,7 @@ export class MCPProxy {
     instance.httpClient = requestHeaders ? this.httpClient.withHeaders(requestHeaders) : this.httpClient;
     instance.tools = this.tools;
     instance.openApiLookup = this.openApiLookup;
+    instance.discoverSpaces = this.discoverSpaces; // shared — handler closes over its own cache
     instance.setupHandlers();
     return instance;
   }

@@ -58,17 +58,6 @@ export class MCPProxy {
     this.methods = methods;
     this.openApiLookup = openApiLookup;
 
-    // TODO: remove after solving the tool availability in Claude issue
-    const toolNames = Object.keys(this.openApiLookup);
-    console.error(
-      `Tools (count: ${toolNames.length}):\n${toolNames
-        .sort()
-        .map((n) => ` - ${n}`)
-        .join("\n")}`,
-    );
-
-    console.error(JSON.stringify(this.openApiLookup, null, 2));
-
     this.setupHandlers();
   }
 

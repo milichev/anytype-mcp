@@ -1,3 +1,6 @@
+import { rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Config, ConfigEnv, ENV_KEYS } from "../config.js";
 
@@ -149,7 +152,7 @@ describe("config utilities", () => {
     it("logs error on parse failure", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       await loadConfig({ OPENAPI_MCP_HEADERS: "bad" });
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"), expect.anything());
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"));
       consoleSpy.mockRestore();
     });
   });
@@ -255,8 +258,32 @@ describe("config utilities", () => {
       await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: JSON.stringify({ ttlMs: "five-minutes" }) })).rejects.toThrow();
     });
 
+    it("throws on valid JSON that fails schema — unrecognized top-level keys (bare spaces map)", async () => {
+      await expect(
+        loadConfig({
+          DISCOVERY_TOOL_CONFIG: JSON.stringify({
+            Attic: { types: { Daily: {} } },
+          }),
+        }),
+      ).rejects.toThrow(/unrecognized_keys|Unrecognized key/i);
+    });
+
     it("error message references DISCOVERY_TOOL_CONFIG on malformed JSON", async () => {
       await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: "oops" })).rejects.toThrow(/DISCOVERY_TOOL_CONFIG/);
+    });
+
+    it("resolves {file:} reference", async () => {
+      const tmp = join(tmpdir(), "discovery-config-test.json");
+      writeFileSync(tmp, JSON.stringify({ ttlMs: 9999 }));
+      const config = await loadConfig({ DISCOVERY_TOOL_CONFIG: `{file:${tmp}}` });
+      expect(config.tools?.discoverSpaces?.ttlMs).toBe(9999);
+      rmSync(tmp);
+    });
+
+    it("throws with readable message on missing file reference", async () => {
+      await expect(loadConfig({ DISCOVERY_TOOL_CONFIG: "{file:/nonexistent/path.json}" })).rejects.toThrow(
+        /Failed to read file reference/,
+      );
     });
   });
 
@@ -286,7 +313,7 @@ describe("config utilities", () => {
     it("logs error referencing OPENAPI_MCP_HEADERS on invalid JSON", async () => {
       const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       await loadConfig({ OPENAPI_MCP_HEADERS: "{bad" });
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"), expect.anything());
+      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining("OPENAPI_MCP_HEADERS"));
       consoleSpy.mockRestore();
     });
   });

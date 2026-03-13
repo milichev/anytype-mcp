@@ -1,6 +1,7 @@
 import { URL } from "node:url";
 import { z } from "zod";
 import { DiscoveryToolConfigSchema } from "../mcp/tools/discovery.schema";
+import { resolveFileRef } from "./resolveFileRef";
 
 export const ENV_KEYS = [
   "MCP_TRANSPORT",
@@ -92,13 +93,19 @@ const HttpClientConfigSchema = z.object({
 
 export type HttpClientConfig = z.infer<typeof HttpClientConfigSchema>;
 
-const ToolsConfigSchema = z.object({
-  /**
-   * Configuration for the discover-spaces tool.
-   * Parsed from DISCOVERY_TOOL_CONFIG (JSON string).
-   */
-  discoverSpaces: JsonString(DiscoveryToolConfigSchema, "DISCOVERY_TOOL_CONFIG").optional(),
-});
+const ToolsConfigSchema = z
+  .object({
+    /**
+     * Configuration for the discover-spaces tool.
+     * Parsed from DISCOVERY_TOOL_CONFIG (JSON string).
+     */
+    discoverSpaces: JsonString(DiscoveryToolConfigSchema, "DISCOVERY_TOOL_CONFIG").optional(),
+  })
+  .transform((val) => {
+    // All fields undefined → return undefined so config.tools is absent
+    if (Object.values(val).every((v) => v === undefined)) return undefined;
+    return val;
+  });
 
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
@@ -166,10 +173,10 @@ export function getConfig() {
           : { type: "stdio" },
       httpClient: {
         baseUrl: process.env.ANYTYPE_API_BASE_URL,
-        headers: process.env.OPENAPI_MCP_HEADERS,
+        headers: resolveFileRef(process.env.OPENAPI_MCP_HEADERS),
       },
-      tools: process.env.DISCOVERY_TOOL_CONFIG ? { discoverSpaces: process.env.DISCOVERY_TOOL_CONFIG } : undefined,
-      instructions: process.env.MCP_INSTRUCTIONS,
+      tools: { discoverSpaces: resolveFileRef(process.env.DISCOVERY_TOOL_CONFIG) },
+      instructions: resolveFileRef(process.env.MCP_INSTRUCTIONS),
     });
   }
 

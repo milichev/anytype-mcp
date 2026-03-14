@@ -7,6 +7,7 @@ import pkg from "../../package.json";
 import { HttpClient, HttpClientConnectionError, HttpClientError } from "../client/http-client";
 import { OpenAPIToMCPConverter, type ToolMethod } from "../openapi/parser";
 import { getConfig } from "../utils/config";
+import { getPlainAxios } from "../utils/getPlainAxios";
 import { resolveInstructions } from "../utils/resolveInstructions";
 import {
   DISCOVER_SPACES_TOOL_NAME,
@@ -35,13 +36,13 @@ export class MCPProxy {
   };
   private discoverSpaces: (params: DiscoverSpacesParams) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
 
-  constructor(name: string, openApiSpec: OpenAPIV3.Document) {
+  private constructor(name: string, openApiSpec: OpenAPIV3.Document, instructions: string | undefined) {
     this.state = {
       toolsLogged: false,
       serverInfo: { name, version: pkg.version, description: `Anytype API proxy (spec v${openApiSpec.info.version})` },
       serverOptions: {
         capabilities: { tools: {} },
-        instructions: resolveInstructions(getConfig().instructions),
+        instructions,
       },
     };
     this.server = new Server(this.state.serverInfo, this.state.serverOptions);
@@ -198,6 +199,16 @@ export class MCPProxy {
     return name.slice(0, 64);
   }
 
+  /**
+   * Async factory: resolves instructions (including anytype:// fetches) before
+   * constructing the MCPProxy instance.
+   */
+  static async create(name: string, openApiSpec: OpenAPIV3.Document): Promise<MCPProxy> {
+    const config = getConfig();
+    const instructions = await resolveInstructions(config.instructions, getPlainAxios(config.httpClient));
+    return new MCPProxy(name, openApiSpec, instructions);
+  }
+
   async connect(transport: Transport) {
     // The SDK will handle stdio communication
     await this.server.connect(transport);
@@ -212,7 +223,7 @@ export class MCPProxy {
   clone(requestHeaders?: Record<string, string>): MCPProxy {
     const instance = Object.create(MCPProxy.prototype) as MCPProxy;
     instance.state = this.state; // shared reference — mutations visible across clones
-    instance.server = new Server(this.state.serverInfo, this.state.serverOptions);
+    instance.server = new Server(this.state.serverInfo, this.state.serverOptions); // instructions already resolved in state
     instance.httpClient = requestHeaders ? this.httpClient.withHeaders(requestHeaders) : this.httpClient;
     instance.tools = this.tools;
     instance.openApiLookup = this.openApiLookup;

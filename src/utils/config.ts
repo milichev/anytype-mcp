@@ -151,6 +151,10 @@ const ConfigSchema = z.object({
   /**
    * Instructions broadcast to MCP clients on connect.
    * undefined = use bundled instructions.md; false = disabled; string = custom content.
+   * The custom content can be:
+   *   * Instructions text verbatim;
+   *   * A special `{file:/path/to.instructions.md}` link (to be exact, the link provided via `MCP_INSTRUCTIONS` env variable, and here it is already resolved with the file content);
+   *   * Anytype deeplink of the page with the instructions, e.g. `anytype://object?objectId=bafyreigve&spaceId=bafyreih.31e0h928360j5`.
    */
   instructions: InstructionsSchema,
 });

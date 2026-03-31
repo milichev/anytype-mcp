@@ -104,10 +104,30 @@ npm install -g @anyproto/anytype-mcp
 | `MCP_HOST`                | `127.0.0.1`                     | Host to bind when `MCP_TRANSPORT=http`.                                                                                                                                              |
 | `MCP_PORT`                | `3666`                          | Port to listen on when `MCP_TRANSPORT=http`. Must be in range 1024–65535.                                                                                                            |
 | `MCP_PASSTHROUGH_HEADERS` | `authorization,anytype-version` | Comma-separated list of inbound HTTP header names (lowercase) forwarded from the MCP HTTP client to the Anytype API. Extend with caution — arbitrary headers must not be forwarded.  |
-| `MCP_INSTRUCTIONS`        | bundled `instructions.md`       | Instructions broadcast to MCP clients on connect. `false` disables; a string overrides with custom content; `{file:/path}` loads content from a file.                                |
+| `MCP_INSTRUCTIONS`        | bundled `instructions.md`       | Instructions broadcast to MCP clients on connect. `false` disables; a string overrides with custom content; `{file:/path}` loads content from a file; `anytype://object?objectId=<id>&spaceId=<id>` loads content from an Anytype page. |
 | `DISCOVERY_TOOL_CONFIG`   | —                               | JSON config for the `discover-spaces` tool. Accepts inline JSON or `{file:/path/to/config.json}`. Options: `ttlMs` (cache TTL ms, default 300000), `spaces` (per-space/type filter). |
 
 
+
+### Custom MCP Instructions
+
+By default the server broadcasts the bundled `instructions.md` to MCP clients on every connection.
+You can replace it with your own content via `MCP_INSTRUCTIONS`:
+
+- **Disable:** `MCP_INSTRUCTIONS=false`
+- **Inline string:** `MCP_INSTRUCTIONS="Your custom instructions here"`
+- **File:** `MCP_INSTRUCTIONS="{file:/path/to/instructions.md}"`
+- **Anytype page:** `MCP_INSTRUCTIONS="anytype://object?objectId=<id>&spaceId=<id>"`
+
+The Anytype page option fetches the object's markdown content at startup and uses it as the instructions string.
+This lets you maintain your MCP instructions as a regular Anytype page — edit it in the app, restart the server to pick up changes.
+
+To get a page's deep link in Anytype: open the page → three-dot menu → **Copy link**. The link has the form:
+```
+anytype://object?objectId=bafyrei...&spaceId=bafyrei....31e0h...
+```
+
+If the page cannot be fetched (Anytype not running, invalid link, network error), the server logs a warning and falls back to the bundled instructions. The warning is also prepended to the instructions text so the connected AI client is aware.
 
 ### discover-spaces Tool
 

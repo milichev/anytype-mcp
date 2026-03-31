@@ -15,6 +15,12 @@ vi.mock("../../client/http-client", async (importOriginal) => {
   return { ...real, HttpClient: MockHttpClient };
 });
 vi.mock("@modelcontextprotocol/sdk/server/index.js");
+vi.mock("../../utils/resolveInstructions", () => ({
+  resolveInstructions: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("../../utils/getPlainAxios", () => ({
+  getPlainAxios: vi.fn().mockReturnValue({}),
+}));
 
 describe("MCPProxy", () => {
   let proxy: MCPProxy;
@@ -46,10 +52,10 @@ describe("MCPProxy", () => {
   const getMockExecuteOperation = () =>
     vi.mocked(HttpClient).mock.results.at(-1)?.value.executeOperation as ReturnType<typeof vi.fn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     mockOpenApiSpec = createMockOpenApiSpec();
-    proxy = new MCPProxy("test-proxy", mockOpenApiSpec);
+    proxy = await MCPProxy.create("test-proxy", mockOpenApiSpec);
   });
 
   describe("listTools handler", () => {
@@ -72,7 +78,7 @@ describe("MCPProxy", () => {
           },
         },
       });
-      const testProxy = new MCPProxy("test-proxy", specWithLongName);
+      const testProxy = await MCPProxy.create("test-proxy", specWithLongName);
       const [listToolsHandler] = getHandlers(testProxy);
       const result = await listToolsHandler();
 
@@ -177,10 +183,10 @@ describe("MCPProxy", () => {
   });
 
   describe("openApiHeaders", () => {
-    it("should pass httpClient config from getConfig() to HttpClient", () => {
+    it("should pass httpClient config from getConfig() to HttpClient", async () => {
       // Config parsing is tested in proxy-config.test.ts.
       // Here we only verify that MCPProxy forwards getConfig().httpClient as-is.
-      new MCPProxy("test-proxy", mockOpenApiSpec);
+      await MCPProxy.create("test-proxy", mockOpenApiSpec);
       expect(HttpClient).toHaveBeenCalledWith(
         expect.objectContaining({ headers: expect.any(Object) }),
         expect.anything(),
@@ -191,8 +197,8 @@ describe("MCPProxy", () => {
   describe("base URL integration", () => {
     // Base URL resolution priority is tested in base-url.test.ts.
     // Here we verify MCPProxy passes getConfig().httpClient to HttpClient (baseUrl may be undefined).
-    it("should pass httpClient config to HttpClient", () => {
-      new MCPProxy("test-proxy", mockOpenApiSpec);
+    it("should pass httpClient config to HttpClient", async () => {
+      await MCPProxy.create("test-proxy", mockOpenApiSpec);
       expect(HttpClient).toHaveBeenCalledWith(
         expect.objectContaining({ headers: expect.any(Object) }),
         expect.anything(),

@@ -193,14 +193,13 @@ export async function fetchDiscovery(
 
 export const DISCOVER_SPACES_TOOL_NAME = "discover-spaces";
 
+const DISCOVER_SPACES_TOOL_DESCRIPTION = `Returns a JSON structure describing all available Spaces and their Types with Properties and Tags, with respective IDs and keys.
+Call this tool FIRST in any session and cache the result mentally for the session. Do not call it again unless you have performed a schema-mutating operation (creating or modifying a type, property, tag, or space).
+Use bracket-notation \`path\` to narrow the result and avoid re-fetching: \`discover-spaces(path='spaces["Career"].types["JobApplication"].properties["Stage"].select')\``;
+
 export const discoverSpacesTool: Tool = {
   name: DISCOVER_SPACES_TOOL_NAME,
-  description: [
-    "Returns a JSON description of all Anytype spaces: space IDs, types, properties, tags, and select option IDs.",
-    "Call this tool FIRST in any session to resolve IDs before calling create/update/search tools.",
-    'Optional bracket-notation path returns only a sub-tree: spaces["Career"].tags',
-    "Set force_refresh=true only after a schema-mutating operation (creating/modifying a type, tag, or space).",
-  ].join("\n"),
+  description: DISCOVER_SPACES_TOOL_DESCRIPTION,
   inputSchema: {
     type: "object",
     properties: {

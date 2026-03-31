@@ -69,7 +69,7 @@ export async function loadOpenApiSpec(): Promise<OpenAPIV3.Document> {
 export async function initProxy() {
   console.error("Initializing Anytype MCP Server...");
   const openApiSpec = await loadOpenApiSpec();
-  const proxy = new MCPProxy("Anytype API", openApiSpec);
+  const proxy = await MCPProxy.create("Anytype API", openApiSpec);
   const { transport: transportConfig } = getConfig();
   if (transportConfig.type === "http") {
     const { host, port, passthroughHeaders } = transportConfig;

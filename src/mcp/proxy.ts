@@ -4,9 +4,16 @@ import { CallToolRequestSchema, ListToolsRequestSchema, Tool } from "@modelconte
 import { Headers } from "node-fetch";
 import { OpenAPIV3 } from "openapi-types";
 import pkg from "../../package.json";
-import { HttpClient, HttpClientError } from "../client/http-client";
+import { HttpClient, HttpClientConnectionError, HttpClientError } from "../client/http-client";
 import { OpenAPIToMCPConverter, type ToolMethod } from "../openapi/parser";
 import { getConfig } from "../utils/config";
+import { resolveInstructions } from "../utils/resolveInstructions";
+import {
+  DISCOVER_SPACES_TOOL_NAME,
+  discoverSpacesTool,
+  makeDiscoverSpacesHandler,
+  type DiscoverSpacesParams,
+} from "./tools/discovery";
 
 type PathItemObject = OpenAPIV3.PathItemObject & {
   get?: OpenAPIV3.OperationObject;
@@ -26,15 +33,21 @@ export class MCPProxy {
     serverInfo: ConstructorParameters<typeof Server>[0];
     serverOptions: NonNullable<ConstructorParameters<typeof Server>[1]>;
   };
+  private discoverSpaces: (params: DiscoverSpacesParams) => Promise<{ content: Array<{ type: "text"; text: string }> }>;
 
   constructor(name: string, openApiSpec: OpenAPIV3.Document) {
     this.state = {
       toolsLogged: false,
       serverInfo: { name, version: pkg.version, description: `Anytype API proxy (spec v${openApiSpec.info.version})` },
-      serverOptions: { capabilities: { tools: {} } },
+      serverOptions: {
+        capabilities: { tools: {} },
+        instructions: resolveInstructions(getConfig().instructions),
+      },
     };
     this.server = new Server(this.state.serverInfo, this.state.serverOptions);
     this.httpClient = new HttpClient(getConfig().httpClient, openApiSpec);
+
+    this.discoverSpaces = makeDiscoverSpacesHandler(getConfig().httpClient, getConfig().tools?.discoverSpaces);
 
     // Convert OpenAPI spec to MCP tools
     const converter = new OpenAPIToMCPConverter(openApiSpec, {
@@ -66,7 +79,7 @@ export class MCPProxy {
         });
       });
 
-      const tools: Tool[] = [];
+      const tools: Tool[] = [discoverSpacesTool];
 
       toolsByMethodName.forEach((bucket) => {
         const isCollision = bucket.length > 1;
@@ -89,15 +102,14 @@ export class MCPProxy {
     this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
       const { name, arguments: params } = request.params;
 
-      // Find the operation in OpenAPI spec
-      const operation = this.findOperation(name);
+      console.error(`[tool] ${name}(${JSON.stringify(params)})`);
 
-      if (!this.state.toolsLogged) {
-        const toolNames = Object.keys(this.openApiLookup);
-        console.error(`tools (count: ${toolNames.length}): ${toolNames.join(", ")}`);
-        this.state.toolsLogged = true;
+      if (name === DISCOVER_SPACES_TOOL_NAME) {
+        return this.discoverSpaces(params as DiscoverSpacesParams);
       }
 
+      // Find the operation in OpenAPI spec
+      const operation = this.findOperation(name);
       if (!operation) {
         throw new Error(`Method ${name} not found`);
       }
@@ -131,6 +143,23 @@ export class MCPProxy {
           };
         }
 
+        if (error instanceof HttpClientConnectionError) {
+          console.error(`Connection error in "${name}" tool call:`, error.message);
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  error: "connection_failed",
+                  message: error.message,
+                  hint: "Ensure the Anytype app is running and reachable.",
+                }),
+              },
+            ],
+          };
+        }
+
         console.error(`Unexpected error in "${name}" tool call`, error);
 
         // don’t leak internals or secrets, throw opaque error
@@ -140,7 +169,14 @@ export class MCPProxy {
   }
 
   private findOperation(operationId: string): (OpenAPIV3.OperationObject & { method: string; path: string }) | null {
-    return this.openApiLookup[operationId] ?? null;
+    const result = this.openApiLookup[operationId] ?? null;
+    if (!result) {
+      console.error(
+        `[findOperation] miss: "${operationId}". Available keys (${Object.keys(this.openApiLookup).length}):`,
+        Object.keys(this.openApiLookup).join(", "),
+      );
+    }
+    return result;
   }
 
   private getContentType(headers: Headers): "text" | "image" | "binary" {
@@ -180,6 +216,7 @@ export class MCPProxy {
     instance.httpClient = requestHeaders ? this.httpClient.withHeaders(requestHeaders) : this.httpClient;
     instance.tools = this.tools;
     instance.openApiLookup = this.openApiLookup;
+    instance.discoverSpaces = this.discoverSpaces; // shared — handler closes over its own cache
     instance.setupHandlers();
     return instance;
   }

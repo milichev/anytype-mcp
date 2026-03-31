@@ -96,14 +96,74 @@ npm install -g @anyproto/anytype-mcp
 
 ## Environment Variables
 
-| Variable                  | Default                         | Description                                                                                                                                                                         |
-| ------------------------- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OPENAPI_MCP_HEADERS`     | —                               | JSON object of headers forwarded to the Anytype API on every request. Required for auth: `{"Authorization":"Bearer <key>", "Anytype-Version":"2025-11-08"}`                         |
-| `ANYTYPE_API_BASE_URL`    | `http://127.0.0.1:31009`        | Anytype API base URL. Set to `http://localhost:31012` for `anytype-cli`.                                                                                                            |
-| `MCP_TRANSPORT`           | `stdio`                         | Transport mode. Set to `http` to enable the Streamable HTTP server.                                                                                                                 |
-| `MCP_HOST`                | `127.0.0.1`                     | Host to bind when `MCP_TRANSPORT=http`.                                                                                                                                             |
-| `MCP_PORT`                | `3666`                          | Port to listen on when `MCP_TRANSPORT=http`. Must be in range 1024–65535.                                                                                                           |
-| `MCP_PASSTHROUGH_HEADERS` | `authorization,anytype-version` | Comma-separated list of inbound HTTP header names (lowercase) forwarded from the MCP HTTP client to the Anytype API. Extend with caution — arbitrary headers must not be forwarded. |
+| Variable                  | Default                         | Description                                                                                                                                                                          |
+| ------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `OPENAPI_MCP_HEADERS`     | —                               | JSON object of headers forwarded to the Anytype API on every request. Required for auth: `{"Authorization":"Bearer <key>", "Anytype-Version":"2025-11-08"}`                          |
+| `ANYTYPE_API_BASE_URL`    | `http://127.0.0.1:31009`        | Anytype API base URL. Set to `http://localhost:31012` for `anytype-cli`.                                                                                                             |
+| `MCP_TRANSPORT`           | `stdio`                         | Transport mode. Set to `http` to enable the Streamable HTTP server.                                                                                                                  |
+| `MCP_HOST`                | `127.0.0.1`                     | Host to bind when `MCP_TRANSPORT=http`.                                                                                                                                              |
+| `MCP_PORT`                | `3666`                          | Port to listen on when `MCP_TRANSPORT=http`. Must be in range 1024–65535.                                                                                                            |
+| `MCP_PASSTHROUGH_HEADERS` | `authorization,anytype-version` | Comma-separated list of inbound HTTP header names (lowercase) forwarded from the MCP HTTP client to the Anytype API. Extend with caution — arbitrary headers must not be forwarded.  |
+| `MCP_INSTRUCTIONS`        | bundled `instructions.md`       | Instructions broadcast to MCP clients on connect. `false` disables; a string overrides with custom content; `{file:/path}` loads content from a file.                                |
+| `DISCOVERY_TOOL_CONFIG`   | —                               | JSON config for the `discover-spaces` tool. Accepts inline JSON or `{file:/path/to/config.json}`. Options: `ttlMs` (cache TTL ms, default 300000), `spaces` (per-space/type filter). |
+
+
+
+### discover-spaces Tool
+
+The `discover-spaces` tool returns a complete snapshot of your Anytype workspace — all spaces with their types, properties, tags, and select option IDs — in a single call. AI assistants use it to resolve IDs before creating or updating objects, eliminating the need to chain multiple list calls.
+
+#### Path narrowing
+
+Instead of fetching the full structure every time, you can request a sub-tree using bracket-notation path syntax:
+```
+discover-spaces(path='spaces["My Space"].tags')
+discover-spaces(path='spaces["My Space"].types["Task"].properties["Status"].select')
+```
+
+#### Filtering spaces and types
+
+By default all spaces and types are included.
+Use `DISCOVERY_TOOL_CONFIG` to limit the scope:
+```json
+{
+  "mcpServers": {
+    "anytype": {
+      "command": "npx",
+      "args": ["-y", "@anyproto/anytype-mcp"],
+      "env": {
+        "OPENAPI_MCP_HEADERS": "{\"Authorization\":\"Bearer <YOUR_API_KEY>\", \"Anytype-Version\":\"2025-11-08\"}",
+        "DISCOVERY_TOOL_CONFIG": "{\"spaces\":{\"Work\":{\"types\":{\"Task\":{},\"Project\":{}}},\"Personal\":{}}}"
+      }
+    }
+  }
+}
+```
+
+For non-trivial configs, use a file reference instead of an inline JSON string:
+```json
+"DISCOVERY_TOOL_CONFIG": "{file:path/to/discovery-config.json}"
+```
+
+`discovery-config.json`:
+```json
+{
+  "ttlMs": 300000,
+  "spaces": {
+    "Work": {
+      "types": {
+        "Task": {},
+        "Project": {}
+      }
+    },
+    "Personal": {}
+  }
+}
+```
+
+#### Cache
+
+Results are cached for 5 minutes by default. Set `ttlMs` in `DISCOVERY_TOOL_CONFIG` to adjust. The AI assistant will call `discover-spaces(force_refresh=true)` automatically after schema-mutating operations (creating or modifying a type, property, tag, or space).
 
 ### Custom API Base URL
 

@@ -2,11 +2,18 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { Headers } from "node-fetch";
 import { OpenAPIV3 } from "openapi-types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { HttpClient } from "../../client/http-client";
+import { HttpClient, HttpClientConnectionError } from "../../client/http-client";
 import { MCPProxy } from "../proxy";
 
-// Mock the dependencies
-vi.mock("../../client/http-client");
+// Keep real error classes (needed for instanceof checks in proxy.ts) but mock the HttpClient constructor.
+vi.mock("../../client/http-client", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../client/http-client")>();
+  const MockHttpClient = vi.fn(function (this: any) {
+    this.executeOperation = vi.fn();
+    this.withHeaders = vi.fn();
+  });
+  return { ...real, HttpClient: MockHttpClient };
+});
 vi.mock("@modelcontextprotocol/sdk/server/index.js");
 
 describe("MCPProxy", () => {
@@ -34,6 +41,10 @@ describe("MCPProxy", () => {
     },
     ...overrides,
   });
+
+  /** Returns the executeOperation mock from the HttpClient instance created by the last MCPProxy constructor call. */
+  const getMockExecuteOperation = () =>
+    vi.mocked(HttpClient).mock.results.at(-1)?.value.executeOperation as ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -77,7 +88,7 @@ describe("MCPProxy", () => {
     };
 
     it("should execute operation and return formatted response", async () => {
-      (HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockSuccessResponse);
+      getMockExecuteOperation().mockResolvedValue(mockSuccessResponse);
 
       (proxy as any).openApiLookup = {
         "API-getTest": {
@@ -104,8 +115,34 @@ describe("MCPProxy", () => {
       );
     });
 
+    it("should return connection_failed error content when Anytype is unreachable", async () => {
+      const connError = new HttpClientConnectionError(
+        "Cannot connect to Anytype API at http://127.0.0.1:31009: connect ECONNREFUSED",
+        "http://127.0.0.1:31009",
+      );
+      getMockExecuteOperation().mockRejectedValue(connError);
+
+      (proxy as any).openApiLookup = {
+        "API-getTest": {
+          operationId: "getTest",
+          responses: { "200": { description: "Success" } },
+          method: "get",
+          path: "/test",
+        },
+      };
+
+      const [, callToolHandler] = getHandlers(proxy);
+      const result = await callToolHandler({ params: { name: "API-getTest", arguments: {} } });
+
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(result.content[0].text);
+      expect(payload.error).toBe("connection_failed");
+      expect(payload.message).toContain("127.0.0.1:31009");
+      expect(payload.hint).toMatch(/Anytype/i);
+    });
+
     it("should handle tool names exceeding 64 characters", async () => {
-      (HttpClient.prototype.executeOperation as ReturnType<typeof vi.fn>).mockResolvedValue(mockSuccessResponse);
+      getMockExecuteOperation().mockResolvedValue(mockSuccessResponse);
 
       const longToolName = "a".repeat(65);
       const truncatedToolName = longToolName.slice(0, 64);

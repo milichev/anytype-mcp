@@ -345,6 +345,7 @@ export class OpenAPIToMCPConverter {
         if (mcpMethod) {
           // convert name to kebab-case to conform mcp tool naming convention
           const uniqueName = this.ensureUniqueName(mcpMethod.name).replaceAll("_", "-");
+
           mcpMethod.name = uniqueName;
           methods[apiName]!.push(mcpMethod);
           const toolName = this.options.skipToolNamePrefix ? uniqueName : `${apiName}-${uniqueName}`;

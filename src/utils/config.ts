@@ -1,5 +1,7 @@
 import { URL } from "node:url";
 import { z } from "zod";
+import { DiscoveryToolConfigSchema } from "../mcp/tools/discovery.schema";
+import { resolveFileRef } from "./resolveFileRef";
 
 export const ENV_KEYS = [
   "MCP_TRANSPORT",
@@ -8,6 +10,8 @@ export const ENV_KEYS = [
   "MCP_PASSTHROUGH_HEADERS",
   "ANYTYPE_API_BASE_URL",
   "OPENAPI_MCP_HEADERS",
+  "DISCOVERY_TOOL_CONFIG",
+  "MCP_INSTRUCTIONS",
 ] as const;
 
 export type ConfigEnv = Partial<Record<(typeof ENV_KEYS)[number], string>>;
@@ -17,6 +21,26 @@ export type ConfigEnv = Partial<Record<(typeof ENV_KEYS)[number], string>>;
  * Prevents header injection attacks (Host, Content-Length, Transfer-Encoding, etc.).
  */
 export const DEFAULT_PASSTHROUGH_HEADERS = ["authorization", "anytype-version"] as const;
+
+/**
+ * Parses a JSON string and validates it against the given schema.
+ * Produces a Zod error on malformed JSON rather than throwing.
+ */
+const JsonString = <T extends z.ZodTypeAny>(schema: T, envKey?: string) =>
+  z
+    .string()
+    .transform((val, ctx) => {
+      try {
+        return JSON.parse(val);
+      } catch {
+        ctx.addIssue({
+          code: "custom",
+          message: `${envKey ? `${envKey}: Invalid JSON` : "Invalid JSON"}: ${val}`,
+        });
+        return z.NEVER;
+      }
+    })
+    .pipe(schema);
 
 const TransportConfigSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("stdio") }),
@@ -58,21 +82,51 @@ const HttpClientConfigSchema = z.object({
    * JSON object of headers forwarded to the upstream API on every request.
    * Parsed from OPENAPI_MCP_HEADERS.
    */
-  headers: z
-    .string()
+  headers: JsonString(z.record(z.string(), z.string()), "OPENAPI_MCP_HEADERS")
     .optional()
-    .transform((val) => {
-      if (!val) return {} as Record<string, string>;
-      try {
-        return z.record(z.string(), z.string()).parse(JSON.parse(val));
-      } catch {
-        console.error("Failed to parse OPENAPI_MCP_HEADERS, ignoring");
-        return {} as Record<string, string>;
-      }
-    }),
+    .catch((ctx) => {
+      console.error(ctx.issues.map(({ message }) => message).join("; "));
+      return undefined;
+    })
+    .default({}),
 });
 
 export type HttpClientConfig = z.infer<typeof HttpClientConfigSchema>;
+
+const ToolsConfigSchema = z
+  .object({
+    /**
+     * Configuration for the discover-spaces tool.
+     * Parsed from DISCOVERY_TOOL_CONFIG (JSON string).
+     */
+    discoverSpaces: JsonString(DiscoveryToolConfigSchema, "DISCOVERY_TOOL_CONFIG").optional(),
+  })
+  .transform((val) => {
+    // All fields undefined → return undefined so config.tools is absent
+    if (Object.values(val).every((v) => v === undefined)) return undefined;
+    return val;
+  });
+
+export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
+
+/**
+ * Instructions config.
+ *
+ * Env: MCP_INSTRUCTIONS
+ *   unset / "true"  → bundled instructions.md content (injected at build time)
+ *   "false"         → disabled; no instructions emitted
+ *   any other string → used as literal instructions content
+ *
+ * Resolved value: string (content) | false (disabled) | undefined (use bundled default)
+ */
+const InstructionsSchema = z
+  .string()
+  .transform((v): string | false | undefined => {
+    if (v === "false") return false;
+    if (v === "true" || v === "") return undefined; // undefined → caller uses bundled
+    return v;
+  })
+  .optional();
 
 /**
  * Anytype MCP server config schema.
@@ -88,6 +142,17 @@ const ConfigSchema = z.object({
    * Target/upstream Anytype OpenAPI client config.
    */
   httpClient: HttpClientConfigSchema,
+
+  /**
+   * Hand-crafted tool configurations.
+   */
+  tools: ToolsConfigSchema.optional(),
+
+  /**
+   * Instructions broadcast to MCP clients on connect.
+   * undefined = use bundled instructions.md; false = disabled; string = custom content.
+   */
+  instructions: InstructionsSchema,
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -108,8 +173,10 @@ export function getConfig() {
           : { type: "stdio" },
       httpClient: {
         baseUrl: process.env.ANYTYPE_API_BASE_URL,
-        headers: process.env.OPENAPI_MCP_HEADERS,
+        headers: resolveFileRef(process.env.OPENAPI_MCP_HEADERS),
       },
+      tools: { discoverSpaces: resolveFileRef(process.env.DISCOVERY_TOOL_CONFIG) },
+      instructions: resolveFileRef(process.env.MCP_INSTRUCTIONS),
     });
   }
 

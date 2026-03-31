@@ -3,7 +3,7 @@ import { Headers } from "node-fetch";
 import OpenAPIClientAxios from "openapi-client-axios";
 import { OpenAPIV3 } from "openapi-types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HttpClient } from "../http-client";
+import { HttpClient, HttpClientConnectionError } from "../http-client";
 
 function makeAxiosError(status: number, statusText: string, data: any, headers: Record<string, string> = {}) {
   const err = new axios.AxiosError(statusText);
@@ -532,5 +532,83 @@ describe("HttpClient", () => {
 
     // Additional check to ensure headers are correctly processed
     expect(response.headers.get("content-type")).toBe("application/json");
+  });
+
+  // ─── HttpClientConnectionError ────────────────────────────────────────────
+
+  describe("connection errors", () => {
+    function makeConnectionError(code: string) {
+      const err = new axios.AxiosError(code);
+      err.code = code;
+      // No `response` — transport-level failure
+      err.isAxiosError = true;
+      return err;
+    }
+
+    it.each([["ECONNREFUSED"], ["ENOTFOUND"], ["ETIMEDOUT"]])(
+      "throws HttpClientConnectionError for %s",
+      async (code) => {
+        const mockAxiosInstance = {
+          testOperation: vi.fn().mockRejectedValue(makeConnectionError(code)),
+        };
+        const MockClient = vi.fn(function (this: any) {
+          this.init = vi.fn().mockResolvedValue(mockAxiosInstance);
+          this.axiosConfigDefaults = { baseURL: "http://127.0.0.1:31009" };
+          return this;
+        });
+        vi.mocked(OpenAPIClientAxios).mockImplementation(MockClient as any);
+
+        const client = new HttpClient(mockConfig, mockOpenApiSpec);
+        const operation = mockOpenApiSpec.paths["/test"]?.post as OpenAPIV3.OperationObject & {
+          method: string;
+          path: string;
+        };
+
+        await expect(client.executeOperation(operation, {})).rejects.toThrow(HttpClientConnectionError);
+      },
+    );
+
+    it("error message includes the base URL", async () => {
+      const mockAxiosInstance = {
+        testOperation: vi.fn().mockRejectedValue(makeConnectionError("ECONNREFUSED")),
+      };
+      const MockClient = vi.fn(function (this: any) {
+        this.init = vi.fn().mockResolvedValue(mockAxiosInstance);
+        this.axiosConfigDefaults = { baseURL: "http://127.0.0.1:31009" };
+        return this;
+      });
+      vi.mocked(OpenAPIClientAxios).mockImplementation(MockClient as any);
+
+      const client = new HttpClient({ baseUrl: "http://127.0.0.1:31009", headers: {} }, mockOpenApiSpec);
+      const operation = mockOpenApiSpec.paths["/test"]?.post as OpenAPIV3.OperationObject & {
+        method: string;
+        path: string;
+      };
+
+      const err = await client.executeOperation(operation, {}).catch((e) => e);
+      expect(err).toBeInstanceOf(HttpClientConnectionError);
+      expect(err.message).toMatch(/127\.0\.0\.1/);
+    });
+
+    it("does NOT throw HttpClientConnectionError when the server returns an HTTP error status", async () => {
+      // An HTTP 503 has a response object — must become HttpClientError, not connection error.
+      const httpErr = makeAxiosError(503, "Service Unavailable", { message: "down" });
+      const mockAxiosInstance = { testOperation: vi.fn().mockRejectedValue(httpErr) };
+      const MockClient = vi.fn(function (this: any) {
+        this.init = vi.fn().mockResolvedValue(mockAxiosInstance);
+        return this;
+      });
+      vi.mocked(OpenAPIClientAxios).mockImplementation(MockClient as any);
+
+      const client = new HttpClient(mockConfig, mockOpenApiSpec);
+      const operation = mockOpenApiSpec.paths["/test"]?.post as OpenAPIV3.OperationObject & {
+        method: string;
+        path: string;
+      };
+
+      const err = await client.executeOperation(operation, {}).catch((e) => e);
+      expect(err).not.toBeInstanceOf(HttpClientConnectionError);
+      expect(err.status).toBe(503);
+    });
   });
 });

@@ -25,7 +25,6 @@ export async function startHttpTransport(
 ): Promise<void> {
   const server = http.createServer(async (req, res) => {
     const { method, url } = req;
-    console.error(`[http] ${method} ${url}`);
 
     applyCorsHeaders(req, res);
 

@@ -3,15 +3,19 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadOpenApiSpec, ValidationError } from "../../src/init-server";
+import { ensureAnytypeRunning } from "../../src/utils/anytype-launcher";
 import { overrideSpecPath } from "../../src/utils/base-url";
 
 // Reset specPathOverride after each test to avoid inter-test contamination
 afterEach(() => overrideSpecPath(undefined));
 
-// Mock fs and axios
+// Mock fs, axios, and the launcher
 vi.mock("node:fs");
 vi.mock("axios");
 vi.mock("@modelcontextprotocol/sdk/server/stdio.js");
+vi.mock("../../src/utils/anytype-launcher", () => ({
+  ensureAnytypeRunning: vi.fn().mockResolvedValue(false),
+}));
 
 // Create a mock Server class with proper prototype methods
 const mockSetRequestHandler = vi.fn();
@@ -96,7 +100,10 @@ describe("loadOpenApiSpec", () => {
 
       await loadOpenApiSpec();
 
-      expect(console.error).toHaveBeenCalledWith("Failed to read OpenAPI specification file:", expect.any(String));
+      expect(console.error).toHaveBeenCalledWith(
+        "Failed to read OpenAPI specification file from ./non-existent.json:",
+        "ENOENT: no such file or directory",
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
@@ -110,7 +117,10 @@ describe("loadOpenApiSpec", () => {
 
       await loadOpenApiSpec();
 
-      expect(console.error).toHaveBeenCalledWith("Failed to parse OpenAPI specification:", expect.any(String));
+      expect(console.error).toHaveBeenCalledWith(
+        "Failed to parse OpenAPI specification from ./invalid.json:",
+        expect.any(String),
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
@@ -136,7 +146,10 @@ describe("loadOpenApiSpec", () => {
 
       await loadOpenApiSpec();
 
-      expect(console.error).toHaveBeenCalledWith("Failed to parse OpenAPI specification:", expect.any(String));
+      expect(console.error).toHaveBeenCalledWith(
+        "Failed to parse OpenAPI specification from ./invalid.yaml:",
+        expect.any(String),
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
   });
@@ -163,7 +176,10 @@ describe("loadOpenApiSpec", () => {
 
       await loadOpenApiSpec();
 
-      expect(console.error).toHaveBeenCalledWith("Failed to fetch OpenAPI specification from URL:", "Network Error");
+      expect(console.error).toHaveBeenCalledWith(
+        "Failed to fetch OpenAPI specification from http://example.com/api-spec.json:",
+        "Network Error",
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
@@ -177,7 +193,10 @@ describe("loadOpenApiSpec", () => {
 
       await loadOpenApiSpec();
 
-      expect(console.error).toHaveBeenCalledWith("Failed to parse OpenAPI specification:", expect.any(String));
+      expect(console.error).toHaveBeenCalledWith(
+        "Failed to parse OpenAPI specification from http://example.com/api-spec.json:",
+        expect.any(String),
+      );
       expect(mockExit).toHaveBeenCalledWith(1);
     });
 
@@ -191,6 +210,49 @@ describe("loadOpenApiSpec", () => {
 
       expect(result).toEqual(validOpenApiSpec);
       expect(axios.get).toHaveBeenCalledWith("http://example.com/api-spec.yaml");
+    });
+  });
+
+  describe("ECONNREFUSED auto-launch retry", () => {
+    const econnRefused = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:31009"), { code: "ECONNREFUSED" });
+
+    it("launches Anytype and retries when ECONNREFUSED on a local URL", async () => {
+      vi.mocked(ensureAnytypeRunning).mockResolvedValue(true);
+      // First call throws, second succeeds after launch
+      vi.mocked(axios.get).mockRejectedValueOnce(econnRefused).mockResolvedValueOnce({ data: validOpenApiSpec });
+      overrideSpecPath("http://127.0.0.1:31009/docs/openapi.json");
+
+      const result = await loadOpenApiSpec();
+
+      expect(ensureAnytypeRunning).toHaveBeenCalledWith("http://127.0.0.1:31009");
+      expect(result).toEqual(validOpenApiSpec);
+    });
+
+    it("exits with 1 when ECONNREFUSED and ensureAnytypeRunning returns false", async () => {
+      vi.mocked(ensureAnytypeRunning).mockResolvedValue(false);
+      vi.mocked(axios.get).mockRejectedValueOnce(econnRefused);
+      overrideSpecPath("http://127.0.0.1:31009/docs/openapi.json");
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+      await loadOpenApiSpec();
+
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining("Cannot connect to Anytype API"));
+      expect(mockExit).toHaveBeenCalledWith(1);
+    });
+
+    it("exits with 1 when Anytype launches but API is still unreachable on retry", async () => {
+      vi.mocked(ensureAnytypeRunning).mockResolvedValue(true);
+      vi.mocked(axios.get).mockRejectedValue(econnRefused); // both calls fail
+      overrideSpecPath("http://127.0.0.1:31009/docs/openapi.json");
+
+      const mockExit = vi.spyOn(process, "exit").mockImplementation((() => {}) as any);
+      await loadOpenApiSpec();
+
+      expect(console.error).toHaveBeenCalledWith(
+        "Failed to parse OpenAPI specification from http://127.0.0.1:31009/docs/openapi.json:",
+        expect.any(String),
+      );
+      expect(mockExit).toHaveBeenCalledWith(1);
     });
   });
 });

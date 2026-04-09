@@ -26,6 +26,18 @@ export class HttpClientError extends Error {
   }
 }
 
+/** Thrown when the upstream API is unreachable (ECONNREFUSED, ENOTFOUND, ETIMEDOUT, etc.). */
+export class HttpClientConnectionError extends Error {
+  constructor(
+    message: string,
+    public readonly baseUrl: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = "HttpClientConnectionError";
+  }
+}
+
 export class HttpClient {
   private api: Promise<AxiosInstance>;
   private client: OpenAPIClientAxios;
@@ -211,6 +223,15 @@ export class HttpClient {
           error.response.status,
           error.response.data,
           headers,
+        );
+      }
+      if (axios.isAxiosError(error) && !error.response) {
+        // No response — transport-level failure (ECONNREFUSED, ENOTFOUND, ETIMEDOUT, …)
+        const baseUrl = (this.client as any).axiosConfigDefaults?.baseURL ?? "unknown";
+        throw new HttpClientConnectionError(
+          `Cannot connect to Anytype API at ${baseUrl}: ${error.message}`,
+          baseUrl,
+          error,
         );
       }
       throw error;
